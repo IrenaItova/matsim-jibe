@@ -1,13 +1,15 @@
 package routing;
 
+import org.matsim.core.router.costcalculators.OnlyTimeDependentTravelDisutility;
+import resources.Properties;
+import resources.Resources;
+import routing.disutility.DistanceDisutility;
 import routing.travelTime.WalkTravelTime;
 import ch.sbb.matsim.analysis.calc.IndicatorCalculator;
 import ch.sbb.matsim.analysis.data.IndicatorData;
 import ch.sbb.matsim.analysis.io.IndicatorWriter;
-import data.CycleProtection;
 import routing.disutility.JibeDisutility;
 import ch.sbb.matsim.analysis.CalculateData;
-import ch.sbb.matsim.analysis.TravelAttribute;
 import ch.sbb.matsim.analysis.calc.GeometryCalculator;
 import ch.sbb.matsim.analysis.data.GeometryData;
 import ch.sbb.matsim.analysis.io.GeometryWriter;
@@ -31,32 +33,26 @@ import java.util.stream.Collectors;
 public class RouteComparison {
 
     private final static Logger log = Logger.getLogger(RouteComparison.class);
-    private final static double MAX_BIKE_SPEED = 16 / 3.6;
     private final static Integer SAMPLE_SIZE = 400;
 
     public static void main(String[] args) throws IOException, FactoryException {
 
-        if(args.length < 5 | args.length == 6) {
-            throw new RuntimeException("Program requires at least 5 arguments: \n" +
-                    "(0) Mode (walk or bike) \n" +
-                    "(1) MATSim network file path (.xml) \n" +
-                    "(2) Zone coordinates file (.csv) \n" +
-                    "(3) Edges file path (.gpkg) \n" +
-                    "(4) Output file path (.gpkg) \n" +
-                    "(5+) OPTIONAL: Names of zones to be used for routing");
+        if(args.length < 4 | args.length == 5) {
+            throw new RuntimeException("Program requires at least 4 arguments: \n" +
+                    "(0) Properties file \n" +
+                    "(1) Zone coordinates file (.csv) \n" +
+                    "(2) Output file path (.gpkg) \n" +
+                    "(3) Mode (walk or bike) \n" +
+                    "(4+) OPTIONAL: Names of zones to be used for routing");
         }
 
-        String mode = args[0];
-        String networkFilePath = args[1];
-        String zoneCoordinates = args[2];
-        String edgesFilePath = args[3];
-        String outputFile = args[4];
+        Resources.initializeResources(args[0]);
+        String zoneCoordinates = args[1];
+        String outputFile = args[2];
+        String mode = args[3];
 
-        // Setup config
-        Config config = ConfigUtils.createConfig();
-        BicycleConfigGroup bicycleConfigGroup = new BicycleConfigGroup();
-        bicycleConfigGroup.setBicycleMode("bike");
-        config.addModule(bicycleConfigGroup);
+        String networkFilePath = Resources.instance.getString(Properties.MATSIM_ROAD_NETWORK);
+        String edgesFilePath = Resources.instance.getString(Properties.NETWORK_LINKS);
 
         // Read network
         log.info("Reading MATSim network...");
@@ -73,7 +69,7 @@ public class RouteComparison {
 
         // Determine set of zones to be used for routing
         Set<String> routingZones;
-        if (args.length == 5) {
+        if (args.length == 4) {
             if(SAMPLE_SIZE != null) {
                 log.info("Randomly sampling " + SAMPLE_SIZE + " of " + zoneCoordMap.size() + " zones.");
                 List<String> routingZonesList = new ArrayList<>(zoneCoordMap.keySet());
@@ -101,11 +97,9 @@ public class RouteComparison {
             veh = null;
             tt = new WalkTravelTime();
         } else if (mode.equals(TransportMode.bike)) {
-            VehicleType type = VehicleUtils.createVehicleType(Id.create("routing", VehicleType.class));
-            type.setMaximumVelocity(MAX_BIKE_SPEED);
-            BicycleLinkSpeedCalculatorDefaultImpl linkSpeedCalculator = new BicycleLinkSpeedCalculatorDefaultImpl((BicycleConfigGroup) config.getModules().get(BicycleConfigGroup.GROUP_NAME));
-            veh = VehicleUtils.createVehicle(Id.createVehicleId(1), type);
-            tt = new BicycleTravelTime(linkSpeedCalculator);
+            Bicycle bicycle = new Bicycle(null);
+            veh = bicycle.getVehicle();
+            tt = bicycle.getTravelTime();
         } else {
             throw new RuntimeException("Routing not set up for mode " + mode);
         }
@@ -113,13 +107,11 @@ public class RouteComparison {
         // DEFINE TRAVEL DISUTILITIES HERE
         Map<String,TravelDisutility> travelDisutilities = new LinkedHashMap<>();
 
-        // Shortest distance
-        travelDisutilities.put("shortestDistance", new JibeDisutility(mode, tt, 0,1,
-                0,0,0,0,0));
+        // Shortest
+        travelDisutilities.put("short", new DistanceDisutility());
 
         // Fastest
-        travelDisutilities.put("fastest", new JibeDisutility(mode, tt,1,0,
-                0,0,0,0,0));
+        travelDisutilities.put("fast", new OnlyTimeDependentTravelDisutility(tt));
 
         // Jibe
         travelDisutilities.put("jibe", new JibeDisutility(mode,tt));
@@ -138,30 +130,7 @@ public class RouteComparison {
         }*/
 
         // DEFINE ADDITIONAL ROUTE ATTRIBUTES TO INCLUDE IN GPKG (DOES NOT AFFECT ROUTING)
-        LinkedHashMap<String,TravelAttribute> attributes = new LinkedHashMap<>();
-        attributes.put("vgvi",(l,td) -> LinkAttractiveness.getVgviFactor(l) * l.getLength());
-        attributes.put("lighting",(l,td) -> LinkAttractiveness.getLightingFactor(l) * l.getLength());
-        attributes.put("shannon", (l,td) -> LinkAttractiveness.getShannonFactor(l) * l.getLength());
-        attributes.put("crime", (l,td) -> LinkAttractiveness.getCrimeFactor(l) * l.getLength());
-        attributes.put("POIs",(l,td) -> LinkAttractiveness.getPoiFactor(l) * l.getLength());
-        attributes.put("negPOIs",(l,td) -> LinkAttractiveness.getNegativePoiFactor(l) * l.getLength());
-        attributes.put("freightPOIs",(l,td) -> LinkStress.getFreightPoiFactor(l) * l.getLength());
-        attributes.put("attractiveness", (l,td) -> LinkAttractiveness.getDayAttractiveness(l) * l.getLength());
-        attributes.put("share_offroad", (l,td) -> CycleProtection.getType(l).equals(CycleProtection.OFFROAD) ? l.getLength() : 0.);
-        attributes.put("share_protected", (l,td) -> CycleProtection.getType(l).equals(CycleProtection.PROTECTED) ? l.getLength() : 0.);
-        attributes.put("share_mixed", (l,td) -> CycleProtection.getType(l).equals(CycleProtection.MIXED) ? l.getLength() : 0.);
-        attributes.put("share_lane", (l,td) -> CycleProtection.getType(l).equals(CycleProtection.LANE) ? l.getLength() : 0.);
-        attributes.put("stress",(l,td) -> LinkStress.getStress(l,mode) * l.getLength());
-        attributes.put("jctStress",(l,td) -> JctStress.getJunctionStress(l,mode));
-        attributes.put("c_tot",(l,td) -> td.getLinkTravelDisutility(l,0,null, veh));
-        attributes.put("c_time",(l,td) -> ((JibeDisutility) td).getTimeComponent(l,0,null,veh));
-        attributes.put("c_dist",(l,td) -> ((JibeDisutility) td).getDistanceComponent(l));
-        attributes.put("c_grad",(l,td) -> ((JibeDisutility) td).getGradientComponent(l));
-        attributes.put("c_surf",(l,td) -> ((JibeDisutility) td).getSurfaceComponent(l));
-        attributes.put("c_attr",(l,td) -> ((JibeDisutility) td).getAttractivenessComponent(l));
-        attributes.put("c_stress",(l,td) -> ((JibeDisutility) td).getStressComponent(l));
-        attributes.put("c_jct",(l,td) -> ((JibeDisutility) td).getJunctionComponent(l));
-
+        LinkedHashMap<String,TravelAttribute> attributes = ActiveAttributes.getJibe(mode,veh);
 
         // OUTPUT RESULTS
         if(outputFile.endsWith(".csv")) {
