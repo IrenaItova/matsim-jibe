@@ -1,6 +1,7 @@
 package trads.io;
 
 import com.google.common.math.LongMath;
+import io.ioUtils;
 import org.apache.log4j.Logger;
 import trip.Trip;
 
@@ -19,7 +20,7 @@ public class TradsCsvWriter {
     // Write results to csv file
     public static void write(Set<Trip> trips, String filePath, Map<String, List<String>> attributes) {
 
-        PrintWriter out = openFileForSequentialWriting(new File(filePath));
+        PrintWriter out = ioUtils.openFileForSequentialWriting(new File(filePath),false);
         assert out != null;
 
         // Route names
@@ -46,6 +47,25 @@ public class TradsCsvWriter {
         logger.info("Wrote " + counter + " trips to " + filePath);
     }
 
+    public static void write(Set<Trip> trips, String filePath, Set<String> attributes) {
+        PrintWriter out = ioUtils.openFileForSequentialWriting(new File(filePath),false);
+        assert out != null;
+
+        // Create header
+        out.println(createHeader(attributes));
+
+        int counter = 0;
+        for (Trip trip : trips) {
+            counter++;
+            if (LongMath.isPowerOfTwo(counter)) {
+                logger.info(counter + " records written.");
+            }
+            out.print(createRow(trip,trip.getRouteNames(),attributes));
+        }
+        out.close();
+        logger.info("Wrote " + counter + " trips to " + filePath);
+    }
+
     private static String createHeader(Set<String> allAttributes) {
         StringBuilder builder = new StringBuilder();
 
@@ -62,7 +82,6 @@ public class TradsCsvWriter {
                 append(SEP).append("DestinationZone").
                 append(SEP).append("Route").
                 append(SEP).append("PathId");
-
         // Route attributes
         for(String attribute : allAttributes) {
             builder.append(SEP).append(attribute);
@@ -71,10 +90,10 @@ public class TradsCsvWriter {
         return builder.toString();
     }
 
-    private static String createRow(Trip trip, Set<String> routes, Set<String> allAttributes) {
+    private static String createRow(Trip trip, Set<String> routeNames, Set<String> allAttributes) {
         StringBuilder builder = new StringBuilder();
 
-        for(String route : routes) {
+        for(String route : routeNames) {
             // Trip identifiers
             builder.append(trip.getHouseholdId()).
                     append(SEP).append(trip.getPersonId()).
@@ -87,7 +106,11 @@ public class TradsCsvWriter {
                     append(SEP).append(trip.getZone(ORIGIN)).
                     append(SEP).append(trip.getZone(DESTINATION)).
                     append(SEP).append(route).
-                    append(SEP).append(trip.getPathIndex(route));
+                    append(SEP);
+
+            if(!trip.getUniqueRoutes().isEmpty()) {
+                builder.append(trip.getPathIndex(route));
+            }
 
             // Attributes
             for(String attribute : allAttributes) {
@@ -99,21 +122,5 @@ public class TradsCsvWriter {
         }
 
         return builder.toString();
-    }
-
-    private static PrintWriter openFileForSequentialWriting(File outputFile) {
-        if (outputFile.getParent() != null) {
-            File parent = outputFile.getParentFile();
-            parent.mkdirs();
-        }
-
-        try {
-            FileWriter fw = new FileWriter(outputFile, false);
-            BufferedWriter bw = new BufferedWriter(fw);
-            return new PrintWriter(bw);
-        } catch (IOException var5) {
-            logger.info("Could not open file <" + outputFile.getName() + ">.");
-            return null;
-        }
     }
 }

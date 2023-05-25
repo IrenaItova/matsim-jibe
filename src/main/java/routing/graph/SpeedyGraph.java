@@ -106,8 +106,12 @@ public class SpeedyGraph {
         this.linkData[base + 4] = (int) Math.round(link.getLength() * 100.0);
         this.linkData[base + 5] = (int) Math.round(link.getLength() / link.getFreespeed() * 100.0);
 
-        this.linkDisutility[linkIdx] = td.getLinkTravelDisutility(link,TIME_VALUE,person,vehicle);
-        this.linkTime[linkIdx] = tt.getLinkTravelTime(link,TIME_VALUE,person,vehicle);
+        if(this.td != null) {
+            this.linkDisutility[linkIdx] = td.getLinkTravelDisutility(link,TIME_VALUE,person,vehicle);
+        }
+        if(this.tt != null) {
+            this.linkTime[linkIdx] = tt.getLinkTravelTime(link,TIME_VALUE,person,vehicle);
+        }
 
         setOutLink(fromNodeIdx, linkIdx);
         setInLink(toNodeIdx, linkIdx);
@@ -153,7 +157,7 @@ public class SpeedyGraph {
         return new InLinkIterator(this);
     }
 
-    Link getLink(int index) {
+    public Link getLink(int index) {
         return this.links[index];
     }
 
@@ -162,6 +166,10 @@ public class SpeedyGraph {
 
     Node getNode(int index) {
         return this.nodes[index];
+    }
+
+    public int getNodeCount() {
+        return this.nodeCount;
     }
 
     public interface LinkIterator {

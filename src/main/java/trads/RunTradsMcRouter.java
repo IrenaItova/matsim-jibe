@@ -1,6 +1,5 @@
 package trads;
 
-import resources.Properties;
 import resources.Resources;
 import routing.ActiveAttributes;
 import routing.Bicycle;
@@ -35,9 +34,8 @@ public class RunTradsMcRouter {
     private final static Logger logger = Logger.getLogger(RunTradsMcRouter.class);
 
     // Parameters for MC Simulation
-    private final static double MAX_MC_ATTRACTIVENESS = 5e-3; // based on avg travel time and rounded up
+    private final static double MAX_MC_AMBIENCE = 5e-3; // based on avg travel time and rounded up
     private final static double MAX_MC_STRESS = 5e-3; // based on average travel time and rounded up
-    private final static double MAX_JCT_M_EQUIVALENT = 20;
 
     public static void main(String[] args) throws IOException, FactoryException {
         if (args.length != 5) {
@@ -55,14 +53,8 @@ public class RunTradsMcRouter {
         String mode = args[3];
         int numberOfSamples = Integer.parseInt(args[4]);
 
-        String inputEdgesGpkg = Resources.instance.getString(Properties.NETWORK_LINKS);
-
         // Read network
-        Network network = NetworkUtils2.readFullNetwork();
-
-        // Create mode-specific networks
-        logger.info("Creating " + mode + "-specific network...");
-        Network modeSpecificNetwork = NetworkUtils2.extractModeSpecificNetwork(network, mode);
+        Network modeSpecificNetwork = NetworkUtils2.readModeSpecificNetwork(mode);
 
         // Read Boundary Shapefile
         logger.info("Reading boundary shapefile...");
@@ -90,14 +82,8 @@ public class RunTradsMcRouter {
             veh = null;
         } else throw new RuntimeException("Modes other than walk and bike are not supported!");
 
-        // Constant marginal costs
-        double mcTime = Resources.instance.getMarginalCost(mode,Properties.TIME);
-        double mcDist = Resources.instance.getMarginalCost(mode,Properties.DISTANCE);
-        double mcGrad = Resources.instance.getMarginalCost(mode,Properties.GRADIENT);
-        double mcComfort = Resources.instance.getMarginalCost(mode,Properties.COMFORT);
-
         // CALCULATOR
-        TradsCalculator calc = new TradsCalculator(selectedTrips);
+        RouteIndicatorCalculator calc = new RouteIndicatorCalculator(selectedTrips);
 
         // Run short and fast routing (for reference)
         calc.network("short", ORIGIN, DESTINATION, veh, modeSpecificNetwork, modeSpecificNetwork, new DistanceDisutility(), tt, ActiveAttributes.get(mode), true);
@@ -110,18 +96,17 @@ public class RunTradsMcRouter {
         for (int i = 0; i < numberOfSamples; i++) {
             counter.incCounter();
 
-            double mcAttr = r.nextDouble() * MAX_MC_ATTRACTIVENESS;
+            double mcAttr = r.nextDouble() * MAX_MC_AMBIENCE;
             double mcStress = r.nextDouble() * MAX_MC_STRESS;
-            double mcJct = r.nextDouble() * MAX_MC_STRESS * MAX_JCT_M_EQUIVALENT;
 
-            JibeDisutility disutilty = new JibeDisutility(mode, tt, mcTime, mcDist, mcGrad, mcComfort, mcAttr, mcStress, mcJct);
+            JibeDisutility disutilty = new JibeDisutility(mode, tt, mcAttr, mcStress);
 
             calc.network("jibe_" + i,ORIGIN,DESTINATION,veh,modeSpecificNetwork,modeSpecificNetwork,disutilty,tt,ActiveAttributes.getJibe(mode,veh),true);
         }
 
         // Write results
         logger.info("Writing results to gpkg file...");
-        TradsUniqueRouteWriter.write(selectedTrips, inputEdgesGpkg, outputGpkg);
+        TradsUniqueRouteWriter.write(selectedTrips, outputGpkg);
         TradsCsvWriter.write(selectedTrips,outputCsv,calc.getAllAttributeNames());
 
     }
