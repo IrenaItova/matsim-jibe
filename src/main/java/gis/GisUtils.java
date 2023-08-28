@@ -1,7 +1,9 @@
 package gis;
 
+import network.NetworkUtils2;
 import org.apache.log4j.Logger;
 import org.geotools.data.simple.SimpleFeatureCollection;
+import org.geotools.data.simple.SimpleFeatureReader;
 import org.geotools.geopkg.FeatureEntry;
 import org.geotools.geopkg.GeoPackage;
 import org.locationtech.jts.geom.*;
@@ -9,10 +11,13 @@ import org.locationtech.jts.index.SpatialIndex;
 import org.locationtech.jts.index.quadtree.Quadtree;
 import org.matsim.api.core.v01.Coord;
 import org.matsim.api.core.v01.Id;
+import org.matsim.api.core.v01.IdMap;
 import org.matsim.api.core.v01.IdSet;
+import org.matsim.api.core.v01.network.Link;
 import org.matsim.api.core.v01.network.Network;
 import org.matsim.api.core.v01.network.Node;
 import org.matsim.core.gbl.MatsimRandom;
+import org.matsim.core.network.NetworkUtils;
 import org.matsim.core.utils.geometry.geotools.MGC;
 import org.matsim.core.utils.misc.Counter;
 import org.opengis.feature.simple.SimpleFeature;
@@ -29,6 +34,18 @@ public class GisUtils {
     public static Point nodeToPoint(Node node) {
         Coord coord = node.getCoord();
         return GEOMETRY_FACTORY.createPoint(new Coordinate(coord.getX(),coord.getY()));
+    }
+
+    public static Set<SimpleFeature> readGpkg(String gpkgFile) throws IOException {
+        GeoPackage geopkg = new GeoPackage(new File(gpkgFile));
+        SimpleFeatureReader r = geopkg.reader(geopkg.features().get(0), null,null);
+        Set<SimpleFeature> features = new HashSet<>();
+        while(r.hasNext()) {
+            features.add(r.next());
+        }
+        r.close();
+        geopkg.close();
+        return Collections.unmodifiableSet(features);
     }
 
     public static void writeFeaturesToGpkg(SimpleFeatureCollection collection, String description, String outputFilePath) throws IOException {
@@ -63,14 +80,90 @@ public class GisUtils {
         return Collections.unmodifiableMap(nodesPerZone);
     }
 
+    public static IdSet<Node> getNodesInAreas(Geometry region, Set<SimpleFeature> zones, Network network) {
+
+        Set<Id<Node>> candidates = NetworkUtils2.getNodesInBoundary(network,region);
+
+        log.info("Assigning nodeIds to polygon features...");
+        SpatialIndex zonesQt = createZoneQuadtree(zones);
+        IdSet<Node> nodes = new IdSet<>(Node.class);
+        Counter counter = new Counter("Processing node "," / " + candidates.size());
+        for (Id<Node> nodeId : candidates) {
+            counter.incCounter();
+            SimpleFeature z = findZone(network.getNodes().get(nodeId).getCoord(),zonesQt);
+            if (z != null) {
+                nodes.add(nodeId);
+            }
+        }
+        log.info("Identified " + nodes.size() + " candidates.");
+        return nodes;
+    }
+
+    public static IdMap<Node,String> getCandidateNodes(Geometry region, Set<SimpleFeature> zones, Network network) {
+
+        Set<Id<Node>> candidates = NetworkUtils2.getNodesInBoundary(network,region);
+        IdMap<Node,String> results = new IdMap<>(Node.class);
+        Map<SimpleFeature,Integer> nodesInside = new HashMap<>();
+
+        log.info("Assigning nodeIds to polygon features...");
+        SpatialIndex zonesQt = createZoneQuadtree(zones);
+
+        Counter counter = new Counter("Processing node "," / " + candidates.size());
+        for (Id<Node> nodeId : candidates) {
+            counter.incCounter();
+            SimpleFeature z = findZone(network.getNodes().get(nodeId).getCoord(),zonesQt);
+            if (z != null) {
+                nodesInside.put(z,nodesInside.getOrDefault(z,0) + 1);
+                results.put(nodeId,z.getID());
+            }
+        }
+        log.info("Identified " + results.size() + " candidates within zones.");
+
+        for(SimpleFeature z : zones) {
+            if(!nodesInside.containsKey(z)) {
+                Point centroid = ((Geometry) z.getDefaultGeometry()).getCentroid();
+                results.put(NetworkUtils.getNearestNode(network,new Coord(centroid.getX(),centroid.getY())).getId(),z.getID());
+                nodesInside.put(z,1);
+            }
+        }
+        log.info("Identified " + results.size() + " candidates total.");
+
+        return results;
+    }
+
+    public static Map<SimpleFeature, IdSet<Link>> assignLinksToZones(Set<SimpleFeature> zones, Network network) {
+        log.info("Assigning linkIds to polygon features...");
+        SpatialIndex zonesQt = createZoneQuadtree(zones);
+        Map<SimpleFeature, IdSet<Link>> linksPerZone = new HashMap<>(zones.size());
+        Counter counter = new Counter("Processing link "," / " + network.getLinks().size());
+        for (Link link : network.getLinks().values()) {
+            counter.incCounter();
+            Node fromNode = link.getFromNode();
+            Node toNode = link.getToNode();
+            SimpleFeature fromZone = findZone(fromNode.getCoord(),zonesQt);
+            SimpleFeature toZone = findZone(toNode.getCoord(),zonesQt);
+            if(fromZone != null) {
+                if(fromZone.equals(toZone)) {
+                    linksPerZone.computeIfAbsent(fromZone, k -> new IdSet<>(Link.class)).add(link.getId());
+                }
+            }
+        }
+        return Collections.unmodifiableMap(linksPerZone);
+    }
+
     private static SpatialIndex createZoneQuadtree(Set<SimpleFeature> zones) {
         log.info("Creating spatial index");
         SpatialIndex zonesQt = new Quadtree();
         Counter counter = new Counter("Indexing zone "," / " + zones.size());
         for (SimpleFeature zone : zones) {
             counter.incCounter();
-            Envelope envelope = ((Geometry) (zone.getDefaultGeometry())).getEnvelopeInternal();
-            zonesQt.insert(envelope, zone);
+            Geometry geom = (Geometry) (zone.getDefaultGeometry());
+            if(!geom.isEmpty()) {
+                Envelope envelope = ((Geometry) (zone.getDefaultGeometry())).getEnvelopeInternal();
+                zonesQt.insert(envelope, zone);
+            } else {
+                throw new RuntimeException("Null geometry for zone " + zone.getID());
+            }
         }
         return zonesQt;
     }

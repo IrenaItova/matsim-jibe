@@ -5,6 +5,8 @@ import org.locationtech.jts.geom.Coordinate;
 import org.locationtech.jts.geom.Geometry;
 import org.locationtech.jts.geom.GeometryFactory;
 import org.matsim.api.core.v01.Coord;
+import org.matsim.api.core.v01.Id;
+import org.matsim.api.core.v01.IdMap;
 import org.matsim.api.core.v01.IdSet;
 import org.matsim.api.core.v01.network.Network;
 import org.matsim.api.core.v01.network.Node;
@@ -26,6 +28,7 @@ public class LocationData {
     private final static String WEIGHT_VAR = "WEIGHT";
 
     private final Map<String, List<Coord>> coords = new LinkedHashMap<>();
+    private final Map<String, IdSet<Node>> nodes = new LinkedHashMap<>();
     private final Map<String, Double> weights = new LinkedHashMap<>();
 
     public LocationData(String filename, Geometry boundary) throws IOException {
@@ -86,16 +89,46 @@ public class LocationData {
         return Collections.unmodifiableMap(weights);
     }
 
-    public Map<String, IdSet<Node>> getNodes(Network xy2lNetwork) {
-        Map<String, IdSet<Node>> idNodeMap = new LinkedHashMap<>();
+    public void estimateNetworkNodes(Network xy2lNetwork) {
         for (Map.Entry<String, List<Coord>> e : coords.entrySet()) {
-            IdSet<Node> nodes = new IdSet<>(Node.class);
+            IdSet<Node> nodeIds = new IdSet<>(Node.class);
             for (Coord coord : e.getValue()) {
-                nodes.add(NetworkUtils.getNearestLinkExactly(xy2lNetwork, coord).getToNode().getId());
+                nodeIds.add(NetworkUtils.getNearestLinkExactly(xy2lNetwork, coord).getToNode().getId());
             }
-            idNodeMap.put(e.getKey(), nodes);
+            nodes.put(e.getKey(), nodeIds);
         }
-        return Collections.unmodifiableMap(idNodeMap);
+    }
+
+    public Map<String, IdSet<Node>> getNodes() {
+        return Collections.unmodifiableMap(nodes);
+    }
+
+    public IdMap<Node,String> getNodeIdMap() {
+
+        IdMap<Node,String> idNodeMap = new IdMap<>(Node.class);
+        for (Map.Entry<String, IdSet<Node>> e : nodes.entrySet()) {
+            Iterator<Id<Node>> it = e.getValue().iterator();
+            Id<Node> nodeId = it.next();
+            if(it.hasNext()) {
+                throw new RuntimeException("Node maps possible only with one node per location!");
+            }
+            idNodeMap.put(nodeId,e.getKey());
+
+        }
+        return idNodeMap;
+    }
+
+    public IdMap<Node,Double> getNodeWeightMap() {
+        IdMap<Node,Double> nodeWeightMap = new IdMap<>(Node.class);
+        for(Map.Entry<String, IdSet<Node>> e : nodes.entrySet()) {
+            Iterator<Id<Node>> it = e.getValue().iterator();
+            Id<Node> nodeId = it.next();
+            if(it.hasNext()) {
+                throw new RuntimeException("Node maps possible only with one node per location!");
+            }
+            nodeWeightMap.put(nodeId,weights.get(e.getKey()));
+        }
+        return nodeWeightMap;
     }
 
     private static int findPositionInArray (String string, String[] array) {
